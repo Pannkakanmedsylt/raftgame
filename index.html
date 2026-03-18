@@ -3,53 +3,44 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Raft Full Server</title>
-
+<title>Multiplayer Raft</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
 <style>
-body{margin:0;overflow:hidden;background:#0b5fa5;font-family:Arial;}
+body{margin:0;overflow:hidden;font-family:Arial;background:#0b5fa5;}
 canvas{display:block;}
-#ui{position:fixed;top:0;left:0;right:0;background:white;padding:8px;z-index:10;}
-#servers{position:fixed;top:50px;left:10px;background:white;padding:10px;z-index:10;}
+#menu{position:fixed;top:10px;left:10px;z-index:10;background:white;padding:10px;}
 </style>
 </head>
-
 <body>
 
-<div id="ui">
-Room:
-<input id="roomInput" value="lobby">
+<div id="menu">
+<input id="roomInput" placeholder="Room name">
+<button onclick="createServer()">Create</button>
 <button onclick="joinRoom()">Join</button>
-<button onclick="loadServers()">Servers</button>
+<button id="startBtn" style="display:none" onclick="startGame()">Start</button>
 </div>
 
-<div id="servers"></div>
 <canvas id="game"></canvas>
 
 <script>
+
 const supabase = window.supabase.createClient(
 "https://rzibpfluyuwwpzvsawqa.supabase.co",
 "sb_publishable_Bg5ytpJ1cHAdGgmXaYtMJA_ucsK7T9Y"
 );
 
 const playerId = crypto.randomUUID();
-let currentRoom="lobby";
+let currentRoom="";
 let isHost=false;
+let gameStarted=false;
 
 const canvas=document.getElementById("game");
 const ctx=canvas.getContext("2d");
-
-function resize(){
 canvas.width=window.innerWidth;
 canvas.height=window.innerHeight;
-}
-window.addEventListener("resize",resize);
-resize();
 
 let player={x:0,y:0,color:"#"+Math.floor(Math.random()*16777215).toString(16)};
 let players={};
-let blocks=[];
 let raft={x:0,y:0};
 let shark={x:200,y:200};
 let keys={};
@@ -57,44 +48,73 @@ let keys={};
 document.addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true);
 document.addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
 
-function joinRoom(){
-currentRoom=document.getElementById("roomInput").value;
-setupRealtime();
-checkWorld();
-}
+const spawnPoints=[{x:-50,y:-50},{x:50,y:-50},{x:0,y:50}];
 
-async function checkWorld(){
-let {data}=await supabase.from("world").select("*").eq("room",currentRoom).single();
-if(!data){
+async function createServer(){
+
+currentRoom="room_"+crypto.randomUUID().slice(0,6);
+document.getElementById("roomInput").value=currentRoom;
+
 await supabase.from("world").insert({
 room:currentRoom,
 raft_x:0,
 raft_y:0,
 shark_x:200,
 shark_y:200,
-host_id:playerId
+host_id:playerId,
+started:false
 });
-isHost=true;
-}else{
+
+joinRoom();
+}
+
+async function joinRoom(){
+
+currentRoom=document.getElementById("roomInput").value;
+
+let spawn=spawnPoints[Math.floor(Math.random()*spawnPoints.length)];
+player.x=spawn.x;
+player.y=spawn.y;
+
+await supabase.from("players").upsert({
+id:playerId,
+room:currentRoom,
+x:player.x,
+y:player.y,
+color:player.color
+});
+
+setupRealtime();
+loadWorld();
+}
+
+async function loadWorld(){
+let {data}=await supabase.from("world").select("*").eq("room",currentRoom).single();
+if(data){
 raft.x=data.raft_x;
 raft.y=data.raft_y;
 shark.x=data.shark_x;
 shark.y=data.shark_y;
 isHost=(data.host_id===playerId);
+gameStarted=data.started;
+if(isHost) document.getElementById("startBtn").style.display="block";
 }
+}
+
+function startGame(){
+supabase.from("world").update({started:true}).eq("room",currentRoom);
 }
 
 function setupRealtime(){
+
 supabase.channel("players-"+currentRoom)
-.on("postgres_changes",
-{event:"*",schema:"public",table:"players",filter:"room=eq."+currentRoom},
-()=>loadPlayers())
+.on("postgres_changes",{event:"*",schema:"public",table:"players",filter:"room=eq."+currentRoom},
+loadPlayers)
 .subscribe();
 
-supabase.channel("blocks-"+currentRoom)
-.on("postgres_changes",
-{event:"*",schema:"public",table:"blocks",filter:"room=eq."+currentRoom},
-()=>loadBlocks())
+supabase.channel("world-"+currentRoom)
+.on("postgres_changes",{event:"*",schema:"public",table:"world",filter:"room=eq."+currentRoom},
+loadWorld)
 .subscribe();
 }
 
@@ -104,42 +124,27 @@ players={};
 data.forEach(p=>{if(p.id!==playerId)players[p.id]=p;});
 }
 
-async function loadBlocks(){
-let {data}=await supabase.from("blocks").select("*").eq("room",currentRoom);
-blocks=data||[];
-}
-
-setInterval(async()=>{
-await supabase.from("players").upsert({
-id:playerId,
-room:currentRoom,
-x:player.x,
-y:player.y,
-color:player.color
-});
-},200);
-
-function getNearest(){
-let nearest=null;
-let min=99999;
-for(let id in players){
-let p=players[id];
-let dx=p.x-shark.x;
-let dy=p.y-shark.y;
-let d=Math.sqrt(dx*dx+dy*dy);
-if(d<min){min=d;nearest=p;}
-}
-return nearest;
-}
-
 function update(){
+
+if(!gameStarted) return;
+
 if(keys["w"])player.y-=3;
 if(keys["s"])player.y+=3;
 if(keys["a"])player.x-=3;
 if(keys["d"])player.x+=3;
 
 if(isHost){
-let target=getNearest();
+let target=null;
+let min=99999;
+
+for(let id in players){
+let p=players[id];
+let dx=p.x-shark.x;
+let dy=p.y-shark.y;
+let d=Math.sqrt(dx*dx+dy*dy);
+if(d<min){min=d;target=p;}
+}
+
 if(target){
 let dx=target.x-shark.x;
 let dy=target.y-shark.y;
@@ -148,20 +153,24 @@ if(dist>0){
 shark.x+=dx/dist*1.5;
 shark.y+=dy/dist*1.5;
 }
-if(dist<25){target.x=0;target.y=0;}
+if(dist<20){target.x=0;target.y=0;}
 }
 
-raft.x+=0.3;
-
-supabase.from("world").upsert({
-room:currentRoom,
+supabase.from("world").update({
 raft_x:raft.x,
 raft_y:raft.y,
 shark_x:shark.x,
-shark_y:shark.y,
-host_id:playerId
-});
+shark_y:shark.y
+}).eq("room",currentRoom);
 }
+
+supabase.from("players").upsert({
+id:playerId,
+room:currentRoom,
+x:player.x,
+y:player.y,
+color:player.color
+});
 }
 
 function draw(){
@@ -172,11 +181,6 @@ ctx.fillRect(raft.x,raft.y,200,200);
 
 ctx.fillStyle="black";
 ctx.fillRect(shark.x,shark.y,30,30);
-
-for(let b of blocks){
-ctx.fillStyle="#8B4513";
-ctx.fillRect(b.x,b.y,40,40);
-}
 
 for(let id in players){
 let p=players[id];
@@ -195,23 +199,6 @@ requestAnimationFrame(loop);
 }
 loop();
 
-async function loadServers(){
-let {data}=await supabase.from("world").select("room");
-let unique=[...new Set((data||[]).map(d=>d.room))];
-let menu=document.getElementById("servers");
-menu.innerHTML="";
-unique.forEach(r=>{
-let btn=document.createElement("button");
-btn.innerText=r;
-btn.onclick=()=>{currentRoom=r;joinRoom();};
-menu.appendChild(btn);
-});
-}
 </script>
-
-</body>
-</html>
-</script>
-
 </body>
 </html>
