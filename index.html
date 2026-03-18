@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Raft Survival Full Build & Automation</title>
+<style>
+body{margin:0;overflow:hidden;font-family:Arial;background:#0b5fa5;}
+#ui{position:fixed;top:10px;left:10px;background:rgba(255,255,255,0.95);padding:10px;border-radius:8px;z-index:10;}
+#craftMenu{position:fixed;top:0;left:0;width:100%;height:100%;background:white;display:none;overflow:auto;padding:20px;z-index:20;}
+.craftItem{border:1px solid #333;padding:10px;margin:8px;cursor:pointer;}
+.slot{width:40px;height:40px;border:1px solid #333;display:inline-flex;align-items:center;justify-content:center;margin:2px;background:#eee;}
+canvas{display:block;}
+</style>
+</head>
+<body>
+
+<div id="ui">
+Wood:<span id="wood"></span> |
+Leaf:<span id="leaf"></span> |
+Plastic:<span id="plastic"></span>
+<hr>
+<div id="hotbar"></div>
+<div>Press B = Build</div>
+<div>Press C = Craft</div>
+</div>
+
+<div id="craftMenu"></div>
+<canvas id="game"></canvas>
+
+<script>
+const canvas=document.getElementById('game');
+const ctx=canvas.getContext('2d');
+canvas.width=window.innerWidth;
+canvas.height=window.innerHeight;
+
+let grid=40;
+let camera={x:0,y:0};
+let player={x:0,y:0,size:18,speed:3};
+
+let raftBlocks=[{x:0,y:0,type:'floor'}];
+let items=[];
+let islands=[];
+
+let wood=30,leaf=20,plastic=20;
+let raftMoving=true;
+let raftSpeed=0.5;
+
+let buildMode=false;
+let hotbar=Array(5).fill(null);
+let selectedSlot=0;
+
+// Recipes
+const recipes={
+ floor:{wood:4,type:'floor'},
+ net:{wood:4,leaf:8,plastic:4,type:'net'},
+ advancedNet:{wood:10,leaf:15,plastic:10,type:'advancedNet'},
+ anchor:{wood:10,leaf:15,plastic:5,type:'anchor'},
+ hook:{wood:5,type:'hook'},
+ axe:{wood:5,type:'axe'},
+ repair:{wood:3,plastic:2,type:'repair'},
+ waterFilter:{wood:8,plastic:4,type:'waterFilter'},
+ grill:{wood:6,plastic:2,type:'grill'},
+ storage:{wood:6,type:'storage'},
+ wall:{wood:4,type:'wall'},
+ roof:{wood:5,type:'roof'}
+};
+
+function openCraft(){
+ const menu=document.getElementById('craftMenu');
+ menu.style.display='block';
+ menu.innerHTML='<h1>CRAFTING</h1>';
+ for(let key in recipes){
+   let r=recipes[key];
+   let div=document.createElement('div');
+   div.className='craftItem';
+   div.innerHTML=`<b>${key}</b><br>Cost: Wood ${r.wood||0} Leaf ${r.leaf||0} Plastic ${r.plastic||0}`;
+   div.onclick=()=>craft(key);
+   menu.appendChild(div);
+ }
+}
+
+function craft(name){
+ let r=recipes[name];
+ if(wood>=(r.wood||0)&&leaf>=(r.leaf||0)&&plastic>=(r.plastic||0)){
+   wood-=(r.wood||0);
+   leaf-=(r.leaf||0);
+   plastic-=(r.plastic||0);
+   let empty=hotbar.indexOf(null);
+   if(empty!==-1)hotbar[empty]=r.type;
+   updateHotbar();
+ }
+}
+
+function updateHotbar(){
+ const bar=document.getElementById('hotbar');
+ bar.innerHTML='';
+ for(let i=0;i<5;i++){
+   let s=document.createElement('div');
+   s.className='slot';
+   s.innerText=hotbar[i]||'';
+   if(i===selectedSlot)s.style.background="#ccc";
+   s.onclick=()=>{selectedSlot=i;};
+   bar.appendChild(s);
+ }
+}
+
+// Controls
+let keys={};
+document.addEventListener('keydown',e=>{
+ keys[e.key.toLowerCase()]=true;
+ if(e.key==='b')buildMode=!buildMode;
+ if(e.key==='c') document.getElementById('craftMenu').style.display==='block'?document.getElementById('craftMenu').style.display='none':openCraft();
+ if(e.key>='1'&&e.key<='5'){selectedSlot=parseInt(e.key)-1;updateHotbar();}
+});
+document.addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+// Floating items
+function spawnItem(){
+ let types=['wood','leaf','plastic'];
+ let t=types[Math.floor(Math.random()*3)];
+ items.push({x:player.x+Math.random()*1000-500,y:player.y-500,type:t});
+}
+setInterval(spawnItem,1200);
+
+// Build
+canvas.addEventListener('click',()=>{
+ if(!buildMode)return;
+ let gx=Math.round(player.x/grid)*grid;
+ let gy=Math.round(player.y/grid)*grid;
+ let item=hotbar[selectedSlot];
+ if(item){
+   raftBlocks.push({x:gx,y:gy,type:item});
+   hotbar[selectedSlot]=null;
+   updateHotbar();
+ }
+});
+
+// Anchor
+function checkAnchor(){
+ raftBlocks.forEach(b=>{
+   if(b.type==='anchor'&&Math.abs(player.x-b.x)<grid&&Math.abs(player.y-b.y)<grid){
+       raftMoving=!raftMoving;
+   }
+ });
+}
+document.addEventListener('keydown',e=>{if(e.key==='e')checkAnchor();});
+
+function update(){
+ if(keys['w'])player.y-=player.speed;
+ if(keys['s'])player.y+=player.speed;
+ if(keys['a'])player.x-=player.speed;
+ if(keys['d'])player.x+=player.speed;
+
+ // Raft movement
+ if(raftMoving){
+   raftBlocks.forEach(b=>b.x+=raftSpeed);
+   items.forEach(i=>i.x+=raftSpeed);
+   islands.forEach(i=>i.x+=raftSpeed);
+   player.x+=raftSpeed;
+ }
+
+ // Net auto-catch
+ raftBlocks.forEach(b=>{
+   if(b.type==='net'||b.type==='advancedNet'){
+     items=items.filter(i=>{
+       if(Math.abs(i.x-b.x)<grid && Math.abs(i.y-b.y)<grid){
+         // Automatically add resources
+         if(i.type==='wood')wood++;
+         if(i.type==='leaf')leaf++;
+         if(i.type==='plastic')plastic++;
+         return false;
+       }
+       return true;
+     });
+   }
+ });
+
+ // Collect directly
+ items=items.filter(i=>{
+   if(Math.abs(i.x-player.x)<20&&Math.abs(i.y-player.y)<20){
+     if(i.type==='wood')wood++;
+     if(i.type==='leaf')leaf++;
+     if(i.type==='plastic')plastic++;
+     return false;
+   }
+   return true;
+ });
+
+ camera.x=player.x-canvas.width/2;
+ camera.y=player.y-canvas.height/2;
+}
+
+function draw(){
+ ctx.clearRect(0,0,canvas.width,canvas.height);
+ ctx.save();
+ ctx.translate(-camera.x,-camera.y);
+
+ ctx.fillStyle="#0b5fa5";
+ ctx.fillRect(camera.x,camera.y,canvas.width,canvas.height);
+
+ items.forEach(i=>{
+   ctx.fillStyle=i.type==='wood'?"brown":i.type==='leaf'?"green":"yellow";
+   ctx.fillRect(i.x,i.y,15,15);
+ });
+
+ raftBlocks.forEach(b=>{
+   if(b.type==='anchor')ctx.fillStyle="black";
+   else if(b.type==='net')ctx.fillStyle="white";
+   else if(b.type==='advancedNet')ctx.fillStyle="#f5f5f5";
+   else if(b.type==='grill')ctx.fillStyle="#444";
+   else ctx.fillStyle="#DEB887";
+   ctx.fillRect(b.x,b.y,grid,grid);
+ });
+
+ ctx.fillStyle="red";
+ ctx.fillRect(player.x,player.y,player.size,player.size);
+ ctx.restore();
+}
+
+function loop(){
+ update();
+ draw();
+ document.getElementById('wood').innerText=wood;
+ document.getElementById('leaf').innerText=leaf;
+ document.getElementById('plastic').innerText=plastic;
+ requestAnimationFrame(loop);
+}
+
+updateHotbar();
+loop();
+</script>
+</body>
+</html>
