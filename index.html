@@ -1,203 +1,28 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Multiplayer Raft</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<style>
-body{margin:0;overflow:hidden;font-family:Arial;background:#0b5fa5;}
-canvas{display:block;}
-#menu{position:fixed;top:10px;left:10px;z-index:10;background:white;padding:10px;}
-</style>
-</head>
-<body>
-
-<div id="menu">
-<input id="roomInput" placeholder="Room name">
-<button onclick="createServer()">Create</button>
-<button onclick="joinRoom()">Join</button>
-<button id="startBtn" style="display:none" onclick="startGame()">Start</button>
-</div>
-
 <canvas id="game"></canvas>
-
 <script>
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
 
-const supabase = window.supabase.createClient(
-"https://rzibpfluyuwwpzvsawqa.supabase.co",
-"sb_publishable_Bg5ytpJ1cHAdGgmXaYtMJA_ucsK7T9Y"
-);
+let player = { x: 100, y: 100 };
 
-const playerId = crypto.randomUUID();
-let currentRoom="";
-let isHost=false;
-let gameStarted=false;
-
-const canvas=document.getElementById("game");
-const ctx=canvas.getContext("2d");
-canvas.width=window.innerWidth;
-canvas.height=window.innerHeight;
-
-let player={x:0,y:0,color:"#"+Math.floor(Math.random()*16777215).toString(16)};
-let players={};
-let raft={x:0,y:0};
-let shark={x:200,y:200};
-let keys={};
-
-document.addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true);
-document.addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
-
-const spawnPoints=[{x:-50,y:-50},{x:50,y:-50},{x:0,y:50}];
-
-async function createServer(){
-
-currentRoom="room_"+crypto.randomUUID().slice(0,6);
-document.getElementById("roomInput").value=currentRoom;
-
-await supabase.from("world").insert({
-room:currentRoom,
-raft_x:0,
-raft_y:0,
-shark_x:200,
-shark_y:200,
-host_id:playerId,
-started:false
+document.addEventListener("keydown", e => {
+  if (e.key === "w") player.y -= 5;
+  if (e.key === "s") player.y += 5;
+  if (e.key === "a") player.x -= 5;
+  if (e.key === "d") player.x += 5;
 });
 
-joinRoom();
+function gameLoop() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // spelare
+  ctx.fillRect(player.x, player.y, 20, 20);
+
+  requestAnimationFrame(gameLoop);
 }
 
-async function joinRoom(){
-
-currentRoom=document.getElementById("roomInput").value;
-
-let spawn=spawnPoints[Math.floor(Math.random()*spawnPoints.length)];
-player.x=spawn.x;
-player.y=spawn.y;
-
-await supabase.from("players").upsert({
-id:playerId,
-room:currentRoom,
-x:player.x,
-y:player.y,
-color:player.color
-});
-
-setupRealtime();
-loadWorld();
-}
-
-async function loadWorld(){
-let {data}=await supabase.from("world").select("*").eq("room",currentRoom).single();
-if(data){
-raft.x=data.raft_x;
-raft.y=data.raft_y;
-shark.x=data.shark_x;
-shark.y=data.shark_y;
-isHost=(data.host_id===playerId);
-gameStarted=data.started;
-if(isHost) document.getElementById("startBtn").style.display="block";
-}
-}
-
-function startGame(){
-supabase.from("world").update({started:true}).eq("room",currentRoom);
-}
-
-function setupRealtime(){
-
-supabase.channel("players-"+currentRoom)
-.on("postgres_changes",{event:"*",schema:"public",table:"players",filter:"room=eq."+currentRoom},
-loadPlayers)
-.subscribe();
-
-supabase.channel("world-"+currentRoom)
-.on("postgres_changes",{event:"*",schema:"public",table:"world",filter:"room=eq."+currentRoom},
-loadWorld)
-.subscribe();
-}
-
-async function loadPlayers(){
-let {data}=await supabase.from("players").select("*").eq("room",currentRoom);
-players={};
-data.forEach(p=>{if(p.id!==playerId)players[p.id]=p;});
-}
-
-function update(){
-
-if(!gameStarted) return;
-
-if(keys["w"])player.y-=3;
-if(keys["s"])player.y+=3;
-if(keys["a"])player.x-=3;
-if(keys["d"])player.x+=3;
-
-if(isHost){
-let target=null;
-let min=99999;
-
-for(let id in players){
-let p=players[id];
-let dx=p.x-shark.x;
-let dy=p.y-shark.y;
-let d=Math.sqrt(dx*dx+dy*dy);
-if(d<min){min=d;target=p;}
-}
-
-if(target){
-let dx=target.x-shark.x;
-let dy=target.y-shark.y;
-let dist=Math.sqrt(dx*dx+dy*dy);
-if(dist>0){
-shark.x+=dx/dist*1.5;
-shark.y+=dy/dist*1.5;
-}
-if(dist<20){target.x=0;target.y=0;}
-}
-
-supabase.from("world").update({
-raft_x:raft.x,
-raft_y:raft.y,
-shark_x:shark.x,
-shark_y:shark.y
-}).eq("room",currentRoom);
-}
-
-supabase.from("players").upsert({
-id:playerId,
-room:currentRoom,
-x:player.x,
-y:player.y,
-color:player.color
-});
-}
-
-function draw(){
-ctx.clearRect(0,0,canvas.width,canvas.height);
-
-ctx.fillStyle="#DEB887";
-ctx.fillRect(raft.x,raft.y,200,200);
-
-ctx.fillStyle="black";
-ctx.fillRect(shark.x,shark.y,30,30);
-
-for(let id in players){
-let p=players[id];
-ctx.fillStyle=p.color;
-ctx.fillRect(p.x,p.y,20,20);
-}
-
-ctx.fillStyle=player.color;
-ctx.fillRect(player.x,player.y,20,20);
-}
-
-function loop(){
-update();
-draw();
-requestAnimationFrame(loop);
-}
-loop();
+gameLoop();
+</script>
 
 </script>
 </body>
