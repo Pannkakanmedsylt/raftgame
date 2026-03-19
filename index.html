@@ -16,28 +16,23 @@
       width: 50px;
       height: 50px;
       border: 2px solid #555;
-      background-color: #ddd;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: bold;
-      font-family: sans-serif;
+      background-color: #eee;
     }
   </style>
 </head>
 <body>
 <canvas id="game" width="800" height="600"></canvas>
 <div id="hotbar">
-  <div class="hotbar-slot">🌊</div>
-  <div class="hotbar-slot">🪵</div>
-  <div class="hotbar-slot">⛏️</div>
-  <div class="hotbar-slot">🍎</div>
-  <div class="hotbar-slot">⚓</div>
+  <div class="hotbar-slot"></div>
+  <div class="hotbar-slot"></div>
+  <div class="hotbar-slot"></div>
+  <div class="hotbar-slot"></div>
+  <div class="hotbar-slot"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
 <script>
-// 🔑 Supabase info
+// Supabase info
 const SUPABASE_URL = "https://evqgohcjebzywedgzoxb.supabase.co";
 const SUPABASE_KEY = "sb_publishable_hKNt3MROWSjgM3sHC3aa7Q_XRC4KMVG";
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
@@ -45,42 +40,51 @@ const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 
-let player = { x: 100, y: 100, width: 30, height: 30 };
+let player = { x: 100, y: 100, width: 30, height: 30, color: getRandomColor() };
 const playerId = Math.random().toString();
 
 let otherPlayers = [];
 
-// raft info
-let raft = { x: 200, y: 200, width: 80, height: 50 };
+// raft
+let raft = { x: 300, y: 300, width: 80, height: 50 };
 
 // movement
 const keys = {};
 document.addEventListener("keydown", e => keys[e.key] = true);
 document.addEventListener("keyup", e => keys[e.key] = false);
 
-// update player position
+// helper
+function getRandomColor() {
+  const letters = '0123456789ABCDEF';
+  let color = '#';
+  for (let i=0; i<6; i++) color += letters[Math.floor(Math.random()*16)];
+  return color;
+}
+
+// update position
 function movePlayer() {
   if (keys["w"]) player.y -= 5;
   if (keys["s"]) player.y += 5;
   if (keys["a"]) player.x -= 5;
   if (keys["d"]) player.x += 5;
 
-  // stay inside canvas
+  // stay in canvas
   player.x = Math.max(0, Math.min(canvas.width - player.width, player.x));
   player.y = Math.max(0, Math.min(canvas.height - player.height, player.y));
 }
 
-// send position to Supabase
+// Supabase updates
 async function updatePlayer() {
   await supabase.from("players").upsert({
     id: playerId,
     x: player.x,
-    y: player.y
+    y: player.y,
+    color: player.color
   });
 }
 setInterval(updatePlayer, 100);
 
-// get all players
+// get other players
 async function getPlayers() {
   const { data } = await supabase.from("players").select("*");
   otherPlayers = data || [];
@@ -89,35 +93,35 @@ setInterval(getPlayers, 100);
 
 // draw water
 function drawWater() {
-  ctx.fillStyle = "#4da6ff"; // light blue water
+  ctx.fillStyle = "#4da6ff";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
 // draw raft
 function drawRaft() {
-  ctx.fillStyle = "#8b4513"; // brown raft
+  ctx.fillStyle = "#8b4513";
   ctx.fillRect(raft.x, raft.y, raft.width, raft.height);
 }
 
 // draw players
 function drawPlayers() {
-  // draw self
-  ctx.fillStyle = "blue";
+  // self
+  ctx.fillStyle = player.color;
   ctx.fillRect(player.x, player.y, player.width, player.height);
 
-  // draw others
-  ctx.fillStyle = "red";
+  // others
   otherPlayers.forEach(p => {
     if (p.id !== playerId) {
+      ctx.fillStyle = p.color || "#ff0000";
       ctx.fillRect(p.x, p.y, 30, 30);
     }
   });
 }
 
-// main game loop
+// game loop
 function gameLoop() {
   movePlayer();
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.clearRect(0,0,canvas.width,canvas.height);
 
   drawWater();
   drawRaft();
